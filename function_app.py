@@ -5,7 +5,7 @@ from io import BytesIO
 
 import azure.functions as func
 from azure.identity import DefaultAzureCredential
-from azure.storage.blob import BlobServiceClient
+from azure.storage.blob import BlobServiceClient, ContentSettings
 from google import genai
 from google.genai import types
 from PIL import Image
@@ -80,6 +80,20 @@ def _create_blob_service_client() -> BlobServiceClient:
     )
 
 
+def _extract_image_data(image_part) -> tuple[bytes, str | None]:
+    """Extract inline image bytes and mime type from a Gemini response part."""
+    inline_data = getattr(image_part, "inline_data", None)
+    if inline_data is None:
+        raise RuntimeError("Image part does not include inline_data.")
+
+    data = getattr(inline_data, "data", None)
+    if not isinstance(data, (bytes, bytearray)):
+        raise RuntimeError("Image inline_data.data is missing or not bytes.")
+
+    mime_type = getattr(inline_data, "mime_type", None)
+    return bytes(data), mime_type
+
+
 @app.timer_trigger(
     schedule="0 0 15 * * *",  # 毎日 15:00 UTC = 00:00 JST
     arg_name="myTimer",
@@ -137,15 +151,17 @@ def generate_anniversary_image(myTimer: func.TimerRequest) -> None:
         if image_part is None:
             raise RuntimeError("画像が返ってきませんでした。プロンプトや入力画像を見直してください。")
 
-        generated_image = image_part.as_image()
-        image_bytes = BytesIO()
-        generated_image.save(image_bytes, format="PNG")
-        image_bytes.seek(0)
+        image_data, mime_type = _extract_image_data(image_part)
+        image_bytes = BytesIO(image_data)
+        logging.info("Generated image received (%d bytes, mime=%s).", len(image_data), mime_type)
 
         blob_client = public_blob_client.get_blob_client(
             container=blob_container_name, blob=blob_name
         )
-        blob_client.upload_blob(image_bytes, overwrite=True)
+        upload_kwargs = {"overwrite": True}
+        if mime_type:
+            upload_kwargs["content_settings"] = ContentSettings(content_type=mime_type)
+        blob_client.upload_blob(image_bytes, **upload_kwargs)
 
         logging.info(f"Image saved to blob: {blob_container_name}/{blob_name}")
     except Exception:
