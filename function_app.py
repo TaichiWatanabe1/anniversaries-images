@@ -2,7 +2,6 @@ import logging
 import os
 from io import BytesIO
 
-from requests import get
 
 import azure.functions as func
 from azure.storage.blob import BlobServiceClient
