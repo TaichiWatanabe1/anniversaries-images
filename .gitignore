@@ -1,0 +1,6 @@
+local.settings.json
+__pycache__/
+*.pyc
+.python_packages/
+.venv/
+output_*.png
