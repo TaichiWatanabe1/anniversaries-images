@@ -4,6 +4,7 @@ from io import BytesIO
 
 
 import azure.functions as func
+from azure.identity import DefaultAzureCredential
 from azure.storage.blob import BlobServiceClient
 from google import genai
 from google.genai import types
@@ -34,6 +35,51 @@ def _get_required_setting(name: str, *, fallback: str | None = None) -> str:
     )
 
 
+def _create_blob_service_client() -> BlobServiceClient:
+    """Create blob client from a valid connection string or managed identity."""
+    for key in ("PUBLIC_BLOB_CONNECTION_STRING", "AzureWebJobsStorage"):
+        raw_value = os.environ.get(key)
+        if not raw_value or not raw_value.strip():
+            continue
+
+        conn_str = raw_value.strip()
+        if conn_str == "UseDevelopmentStorage=true":
+            raise RuntimeError(
+                f"App setting '{key}' is set to UseDevelopmentStorage=true, "
+                "which is only for local Azurite. Set a real Azure Storage "
+                "connection string in Azure."
+            )
+        if conn_str.startswith("@Microsoft.KeyVault("):
+            raise RuntimeError(
+                f"App setting '{key}' contains an unresolved Key Vault reference. "
+                "Check managed identity permissions and key vault reference status."
+            )
+
+        try:
+            logging.info("Using blob connection string from app setting '%s'.", key)
+            return BlobServiceClient.from_connection_string(conn_str)
+        except ValueError as exc:
+            raise RuntimeError(
+                f"App setting '{key}' is present but malformed for Azure Storage "
+                "connection string format."
+            ) from exc
+
+    account_url = os.environ.get("PUBLIC_BLOB_ACCOUNT_URL", "").strip()
+    if account_url:
+        logging.info(
+            "Using blob account URL from PUBLIC_BLOB_ACCOUNT_URL with managed identity."
+        )
+        return BlobServiceClient(
+            account_url=account_url, credential=DefaultAzureCredential()
+        )
+
+    raise RuntimeError(
+        "Missing blob storage configuration. Set PUBLIC_BLOB_CONNECTION_STRING "
+        "(or AzureWebJobsStorage), or set PUBLIC_BLOB_ACCOUNT_URL and grant the "
+        "Function App managed identity 'Storage Blob Data Contributor'."
+    )
+
+
 @app.timer_trigger(
     schedule="0 0 15 * * *",  # 毎日 15:00 UTC = 00:00 JST
     arg_name="myTimer",
@@ -45,14 +91,11 @@ def generate_anniversary_image(myTimer: func.TimerRequest) -> None:
         logging.info("Anniversary image generation started.")
 
         gemini_api_key = _get_required_setting("GEMINI_API_KEY")
-        public_connection_string = _get_required_setting(
-            "PUBLIC_BLOB_CONNECTION_STRING", fallback="AzureWebJobsStorage"
-        )
         blob_container_name = os.environ.get("BLOB_CONTAINER_NAME", "output")
         blob_name = os.environ.get("BLOB_NAME", "anniversary_icon.png")
         base_image_blob_name = os.environ.get("BASE_IMAGE_BLOB_NAME", "favicon.png")
 
-        public_blob_client = BlobServiceClient.from_connection_string(public_connection_string)
+        public_blob_client = _create_blob_service_client()
         base_image_blob = public_blob_client.get_blob_client(
             container=blob_container_name, blob=base_image_blob_name
         )
