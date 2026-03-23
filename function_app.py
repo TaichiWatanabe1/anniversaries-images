@@ -123,11 +123,18 @@ def generate_anniversary_image(myTimer: func.TimerRequest) -> None:
             logging.warning("No anniversaries found for mmdd=%s. No image will be generated.", mmdd)
             return
 
+        container_client = public_blob_client.get_container_client(blob_container_name)
+        blob_prefix = "anniversary_icon_"
+        for blob in container_client.list_blobs(name_starts_with=blob_prefix):
+            if blob.name.endswith(".png"):
+                container_client.delete_blob(blob.name)
+                logging.info("Deleted existing blob: %s/%s", blob_container_name, blob.name)
+
         for index, item in enumerate(items):
             prompt = f"""
-            添付のアプリケーションのアイコンを**今日の情報**を元に拡張してください。
-            今日が何の日かがわかるように、アイコンの中に日付と記念日を入れてください。
-            ただし、添付のアプリケーションのアイコンの外側に余白は作らないでください。アイコン全体を使ってください。
+            添付のアプリケーションのアイコンを**今日の情報**を元にアプリケーションのアイコンの中を装飾してください。
+            今日が何の日かがわかるように、アプリケーションのアイコンの中に日付と記念日を入れてください。
+            ただし、添付のアプリケーションのアイコンの外側は一切拡張しないでください。
 
             # 今日の情報
             - 日付: {yymmdd}
