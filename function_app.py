@@ -106,7 +106,6 @@ def generate_anniversary_image(myTimer: func.TimerRequest) -> None:
 
         gemini_api_key = _get_required_setting("GEMINI_API_KEY")
         blob_container_name = os.environ.get("BLOB_CONTAINER_NAME", "output")
-        blob_name = os.environ.get("BLOB_NAME", "anniversary_icon.png")
         base_image_blob_name = os.environ.get("BASE_IMAGE_BLOB_NAME", "favicon.png")
 
         public_blob_client = _create_blob_service_client()
@@ -119,51 +118,59 @@ def generate_anniversary_image(myTimer: func.TimerRequest) -> None:
         mmdd = get_today_mmdd()
         items = fetch_anniversaries(mmdd)
 
-        prompt = f"""
-        アプリケーションのアイコンを**今日の情報**を元に拡張してください。
-
-        # 今日の情報
-        - 日付: {yymmdd}
-        - 記念日一覧: {"\n".join(items)}
-
-        """
-
         client = genai.Client(api_key=gemini_api_key)
-        response = client.models.generate_content(
-            model="gemini-3.1-flash-image-preview",
-            contents=[base_image, prompt],
-            config=types.GenerateContentConfig(
-                response_modalities=["Image"],
-                image_config=types.ImageConfig(
-                    aspect_ratio="1:1",
-                    image_size="2K",
+        if not items:
+            logging.warning("No anniversaries found for mmdd=%s. No image will be generated.", mmdd)
+            return
+
+        for index, item in enumerate(items):
+            prompt = f"""
+            アプリケーションのアイコンを**今日の情報**を元に拡張してください。
+
+            # 今日の情報
+            - 日付: {yymmdd}
+            - 記念日: {item}
+
+            """
+
+            response = client.models.generate_content(
+                model="gemini-3.1-flash-image-preview",
+                contents=[base_image, prompt],
+                config=types.GenerateContentConfig(
+                    response_modalities=["Image"],
+                    image_config=types.ImageConfig(
+                        aspect_ratio="1:1",
+                        image_size="2K",
+                    ),
                 ),
-            ),
-        )
+            )
 
-        image_part = None
-        for part in response.parts:
-            if getattr(part, "inline_data", None) is not None:
-                image_part = part
-            elif getattr(part, "text", None):
-                logging.info(part.text)
+            image_part = None
+            for part in response.parts:
+                if getattr(part, "inline_data", None) is not None:
+                    image_part = part
+                elif getattr(part, "text", None):
+                    logging.info(part.text)
 
-        if image_part is None:
-            raise RuntimeError("画像が返ってきませんでした。プロンプトや入力画像を見直してください。")
+            if image_part is None:
+                raise RuntimeError("画像が返ってきませんでした。プロンプトや入力画像を見直してください。")
 
-        image_data, mime_type = _extract_image_data(image_part)
-        image_bytes = BytesIO(image_data)
-        logging.info("Generated image received (%d bytes, mime=%s).", len(image_data), mime_type)
+            image_data, mime_type = _extract_image_data(image_part)
+            image_bytes = BytesIO(image_data)
+            blob_name = f"anniversary_icon_{index}.png"
+            logging.info(
+                "Generated image for index=%d (%d bytes, mime=%s).", index, len(image_data), mime_type
+            )
 
-        blob_client = public_blob_client.get_blob_client(
-            container=blob_container_name, blob=blob_name
-        )
-        upload_kwargs = {"overwrite": True}
-        if mime_type:
-            upload_kwargs["content_settings"] = ContentSettings(content_type=mime_type)
-        blob_client.upload_blob(image_bytes, **upload_kwargs)
+            blob_client = public_blob_client.get_blob_client(
+                container=blob_container_name, blob=blob_name
+            )
+            upload_kwargs = {"overwrite": True}
+            if mime_type:
+                upload_kwargs["content_settings"] = ContentSettings(content_type=mime_type)
+            blob_client.upload_blob(image_bytes, **upload_kwargs)
 
-        logging.info(f"Image saved to blob: {blob_container_name}/{blob_name}")
+            logging.info("Image saved to blob: %s/%s", blob_container_name, blob_name)
     except Exception:
         logging.exception("Anniversary image generation failed.")
         raise
