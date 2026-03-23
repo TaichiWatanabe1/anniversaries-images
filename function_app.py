@@ -125,7 +125,9 @@ def generate_anniversary_image(myTimer: func.TimerRequest) -> None:
 
         for index, item in enumerate(items):
             prompt = f"""
-            アプリケーションのアイコンを**今日の情報**を元に拡張してください。
+            添付のアプリケーションのアイコンを**今日の情報**を元に拡張してください。
+            今日が何の日かがわかるように、アイコンの中に日付と記念日を入れてください。
+            ただし、添付のアプリケーションのアイコンの外側に余白は作らないでください。アイコン全体を使ってください。
 
             # 今日の情報
             - 日付: {yymmdd}
